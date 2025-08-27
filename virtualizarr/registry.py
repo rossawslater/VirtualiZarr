@@ -10,6 +10,9 @@ from collections import namedtuple
 from typing import TYPE_CHECKING, Dict, Iterator, Optional, Tuple, TypeAlias
 from urllib.parse import urlparse
 
+import pathlib
+import os
+
 if TYPE_CHECKING:
     from obstore.store import (
         ObjectStore,
@@ -260,7 +263,8 @@ class ObjectStoreRegistry:
                     )
                 else:
                     path_after_prefix = path.lstrip("/")
-                return store, path_after_prefix
+
+                return store, os.path.join(*path_after_prefix.split('/')[1:])# extremely hacky
         raise ValueError(f"Could not find an ObjectStore matching the url `{url}`")
 
 
