@@ -116,8 +116,11 @@ class ObjectStoreRegistry:
         from obstore.store import S3Store
         from virtualizarr.registry import ObjectStoreRegistry
 
-        s3store = S3Store(bucket="my-bucket-1", prefix="orig-path")
-        reg = ObjectStoreRegistry({"s3://my-bucket-1": s3store})
+
+    # Enable path-style S3 URLs for compatibility with MinIO and custom endpoints
+    s3_options = {"addressing_style": "path"}
+    s3store = S3Store(bucket="my-bucket-1", prefix="orig-path", s3_options=s3_options)
+    reg = ObjectStoreRegistry({"s3://my-bucket-1": s3store})
 
         ret, path = reg.resolve("s3://my-bucket-1/orig-path/group/my-file.nc")
         assert path == "group/my-file.nc"
@@ -152,11 +155,12 @@ class ObjectStoreRegistry:
         from virtualizarr.registry import ObjectStoreRegistry
 
         reg = ObjectStoreRegistry()
-        orig_store = S3Store(bucket="my-bucket-1", prefix="orig-path")
-        reg.register("s3://my-bucket-1", orig_store)
+    s3_options = {"addressing_style": "path"}
+    orig_store = S3Store(bucket="my-bucket-1", prefix="orig-path", s3_options=s3_options)
+    reg.register("s3://my-bucket-1", orig_store)
 
-        new_store = S3Store(bucket="my-bucket-1", prefix="updated-path")
-        reg.register("s3://my-bucket-1", new_store)
+    new_store = S3Store(bucket="my-bucket-1", prefix="updated-path", s3_options=s3_options)
+    reg.register("s3://my-bucket-1", new_store)
         ```
         """
         parsed = urlparse(url)
@@ -235,8 +239,9 @@ class ObjectStoreRegistry:
         ```
 
         ```python exec="on" source="above" session="registry-resolve-examples"
-        s3store = S3Store(bucket = "my-bucket", prefix="my-data/prefix/")
-        registry.register("s3://my-bucket", s3store)
+    s3_options = {"addressing_style": "path"}
+    s3store = S3Store(bucket = "my-bucket", prefix="my-data/prefix/", s3_options=s3_options)
+    registry.register("s3://my-bucket", s3store)
         ret, path = registry.resolve("s3://my-bucket/my-data/prefix/my-file.nc")
         assert path == "my-file.nc"
         assert ret is s3store
@@ -246,6 +251,21 @@ class ObjectStoreRegistry:
         path = parsed.path
 
         key = UrlKey(parsed.scheme, parsed.netloc)
+
+        # Fallback: allow registrations made with `s3://bucket` to match
+        # path-style S3 endpoints such as `http://minio:9000/bucket/...`.
+        # Prefer an explicit `s3://<bucket>` registration when the first path
+        # segment matches a registered S3 bucket, even if the `(scheme, netloc)`
+        # key also exists. This avoids cases where host-based registrations
+        # accidentally return a store but leave the bucket in the returned path.
+        if parsed.scheme in ("http", "https"):
+            segments = list(path_segments(parsed.path))
+            if segments:
+                s3_fallback_key = UrlKey("s3", segments[0])
+                if s3_fallback_key in self.map:
+                    # Prefer the s3 key and remove the bucket segment from the path
+                    key = s3_fallback_key
+                    path = "/" + "/".join(segments[1:]) if len(segments) > 1 else "/"
 
         if key in self.map:
             result = self.map[key].lookup(path)
@@ -264,7 +284,10 @@ class ObjectStoreRegistry:
                 else:
                     path_after_prefix = path.lstrip("/")
 
-                return store, os.path.join(*path_after_prefix.split('/')[1:])# extremely hacky
+                # Return the trailing path exactly as resolved. Previously a
+                # hack removed the first segment which caused bucket duplication
+                # or dropped the wrong path element for path-style endpoints.
+                return store, path_after_prefix
         raise ValueError(f"Could not find an ObjectStore matching the url `{url}`")
 
 

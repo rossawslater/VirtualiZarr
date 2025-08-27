@@ -184,21 +184,21 @@ class ManifestStore(Store):
             return None
         offset = manifest._offsets[chunk_indexes]
         length = manifest._lengths[chunk_indexes]
-        # Get the configured object store instance that matches the path
+        # Get the configured object store instance that matches the path. The
+        # registry returns a `path_after_prefix` which is the trailing path
+        # relative to the matched store (i.e., it has the bucket/prefix removed
+        # when appropriate). Use that value rather than re-parsing the original
+        # `path`, which can still contain the bucket segment for path-style S3
+        # endpoints (MinIO) and lead to the bucket being included twice.
         store, path_after_prefix = self._registry.resolve(path)
         if not store:
             raise ValueError(
                 f"Could not find a store to use for {path} in the store registry"
             )
 
-        path_in_store = urlparse(path).path
-        if hasattr(store, "prefix") and store.prefix:
-            prefix = str(store.prefix).lstrip("/")
-        elif hasattr(store, "url"):
-            prefix = urlparse(store.url).path.lstrip("/")
-        else:
-            prefix = ""
-        path_in_store = path_in_store.lstrip("/").removeprefix(prefix).lstrip("/")
+        # `path_after_prefix` is already the key within the store; use it
+        # directly when making requests.
+        path_in_store = path_after_prefix.lstrip("/")
         # Transform the input byte range to account for the chunk location in the file
         chunk_end_exclusive = offset + length
         byte_range = _transform_byte_range(
